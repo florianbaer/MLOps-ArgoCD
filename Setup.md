@@ -63,6 +63,12 @@ git push
 The SSH secret for DAGs repository is configured in `values.yaml` and will be created automatically by the Helm chart.
 
 ```bash
+# create namespace for Airflow
+kubectl create namespace airflow
+
+# apply secret for SSH key (if not using Helm to create it)
+kubectl apply -f git-ssh-secret.yaml -n airflow
+
 # Apply the ArgoCD Application
 kubectl apply -f argocd-application.yaml
 

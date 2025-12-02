@@ -1,12 +1,6 @@
 dependencies:
 - name: airflow
-  repository: https://airflow-helm.github.io/charts
-  version: 8.9.0
-- name: postgresql
-  repository: https://charts.helm.sh/stable
-  version: 8.6.4
-- name: redis
-  repository: https://charts.helm.sh/stable
-  version: 10.5.7
-digest: sha256:f07a13febbaf2cf81cc65adc59e835d15602b814d5b9aa143358f7ddf4556a15
-generated: "2025-12-02T13:26:31.799444+01:00"
+  repository: https://airflow.apache.org
+  version: 1.15.0
+digest: sha256:9f9c09a51697b3df9a16c3064acd65534d62a6112ab919639d36865ce61fbe22
+generated: "2025-12-02T13:56:01.878306+01:00"

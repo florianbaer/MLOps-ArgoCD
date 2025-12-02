@@ -1,0 +1,11 @@
+apiVersion: v2
+name: mlops-airflow
+description: MLOps Airflow deployment using ArgoCD
+type: application
+version: 0.1.0
+appVersion: "2.10.0"
+
+dependencies:
+  - name: airflow
+    version: "1.18.0"
+    repository: https://airflow.apache.org

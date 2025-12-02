@@ -1,0 +1,9 @@
+airflow:
+  dags:
+    gitSync:
+      enabled: true
+      repo: git@github.com:HSLU-DBIZ/JobMonitor-DAGs.git
+      branch: main
+      subPath: ""
+      sshKeySecret: airflow-ssh-secret
+

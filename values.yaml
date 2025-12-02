@@ -5,5 +5,5 @@ airflow:
       repo: git@github.com:HSLU-DBIZ/JobMonitor-DAGs.git
       branch: main
       subPath: ""
-      sshKeySecret: airflow-ssh-secret
+      sshSecret: git-ssh-secret
 

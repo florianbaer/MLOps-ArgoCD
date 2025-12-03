@@ -6,4 +6,3 @@ resources:
   - 01-helmrepository.yaml
   - 02-gitrepository.yaml
   - 03-helmrelease.yaml
-  - flux-deploy-key.yaml

@@ -186,10 +186,8 @@ kubectl logs -n airflow <scheduler-pod-name> -c git-sync
 │       ├── 01-helmrepository.yaml    # Airflow Helm repository source
 │       ├── 02-gitrepository.yaml     # Config repository source (optional)
 │       └── 03-helmrelease.yaml       # Airflow deployment with security
-├── archive/
-│   └── argocd-application.yaml       # Previous ArgoCD configuration
-├── git-ssh-secret.yaml               # SSH key for DAG repository
-├── Chart.yaml                        # Helm chart metadata (optional)
+git-ssh-secret.yaml               # SSH key for DAG repository
+Chart.yaml                        # Helm chart metadata (optional)
 └── README.md                         # This file
 ```
 
@@ -310,25 +308,6 @@ All sensitive data (passwords, keys) are stored in Kubernetes secrets and **neve
 - `airflow-fernet-key` - Airflow encryption key
 - `flux-git-ssh` - SSH key for DAG repository
 
-### Rotating Secrets
-
-To rotate a secret:
-
-```bash
-# 1. Delete the old secret
-kubectl delete secret airflow-postgresql -n airflow
-
-# 2. Create new secret with new password
-kubectl create secret generic airflow-postgresql \
-  --from-literal=postgres-password="$(openssl rand -base64 32)" \
-  --from-literal=password="$(openssl rand -base64 32)" \
-  --namespace airflow
-
-# 3. Restart affected pods
-kubectl rollout restart deployment -n airflow
-kubectl rollout restart statefulset -n airflow
-```
-
 ### Security Best Practices
 
 1. **Use external secrets management** (HashiCorp Vault, AWS Secrets Manager, etc.) for production
@@ -350,16 +329,6 @@ Before deploying to production:
 - [ ] Configure resource limits and quotas
 - [ ] Set up backup and disaster recovery for PostgreSQL data
 - [ ] Enable audit logging
-
-## Flux vs ArgoCD Comparison
-
-| Feature | ArgoCD | Flux |
-|---------|---------|------|
-| Application Definition | Single `Application` CR | Multiple CRs (HelmRepository, HelmRelease, etc.) |
-| Auto-sync | Configured per application | Always on (interval-based) |
-| UI | Web UI available | CLI-based (UI available via Flux UI extension) |
-| Prune | Explicit configuration | Default behavior |
-| Multi-tenancy | Built-in | Via Kustomization and RBAC |
 
 ## Updating Airflow Version
 

@@ -1,61 +1,15 @@
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flux-deploy-key
-  namespace: flux-system
-type: Opaque
-stringData:
-  identity: |
-    -----BEGIN OPENSSH PRIVATE KEY-----
-    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
-    -----END OPENSSH PRIVATE KEY-----
-  known_hosts: |
-    github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
-    github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
-    github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CTZMNQS++
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: flux-deploy-key
+#   namespace: flux-system
+# type: Opaque
+# stringData:
+#   identity: |
+#     -----BEGIN OPENSSH PRIVATE KEY-----
+#     
+#     -----END OPENSSH PRIVATE KEY-----
+#   known_hosts: |
+#     github.com ssh-ed25519 
+#     github.com ecdsa-sha2-nistp256 
+#     github.com ssh-rsa 

@@ -34,13 +34,7 @@ spec:
     webserverSecretKeySecretName: "airflow-webserver-secret"
     fernetKeySecretName: "airflow-fernet-key"
 
-    # Disable Helm hooks for GitOps workflow
-    createUserJob:
-      useHelmHooks: false
-      applyCustomEnv: false
-    migrateDatabaseJob:
-      useHelmHooks: false
-      applyCustomEnv: false
+
 
     postgresql:
          enabled: true

@@ -1,4 +1,10 @@
+# This values.yaml file can be used as a reference or for local development
+# For production, the values are defined in clusters/production/03-helmrelease.yaml
+
 airflow:
+  airflowVersion: "3.0.2"
+  executor: "KubernetesExecutor"
+
   # Disable Helm hooks for GitOps workflow
   createUserJob:
     useHelmHooks: false
@@ -15,4 +21,71 @@ airflow:
       branch: main
       subPath: ""
       sshKeySecret: flux-git-ssh
+      wait: 60
+      maxFailures: 0
+    persistence:
+      enabled: false
 
+  # Resource configuration
+  webserver:
+    replicas: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+  scheduler:
+    replicas: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+  triggerer:
+    enabled: true
+    replicas: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  postgresql:
+    enabled: true
+    auth:
+      enablePostgresUser: true
+      postgresPassword: "airflow"
+      username: "airflow"
+      password: "airflow"
+      database: "airflow"
+    primary:
+      persistence:
+        enabled: true
+        size: 8Gi
+
+  redis:
+    enabled: false
+
+  statsd:
+    enabled: true
+
+  logs:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+  config:
+    core:
+      load_examples: false
+    webserver:
+      expose_config: false
+    metrics:
+      statsd_on: true

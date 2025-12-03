@@ -113,7 +113,42 @@ kubectl apply -f git-ssh-secret.yaml
 kubectl get secret flux-git-ssh -n airflow
 ```
 
-### Step 3: Wait for Flux to Deploy Airflow
+### Step 3: Create Required Secrets
+
+Before Airflow can deploy, you must create Kubernetes secrets for sensitive data. **These secrets are never stored in Git.**
+
+```bash
+# 1. PostgreSQL Database Password
+kubectl create secret generic airflow-postgresql \
+  --from-literal=postgres-password="$(openssl rand -base64 32)" \
+  --from-literal=password="$(openssl rand -base64 32)" \
+  --namespace airflow
+
+# 2. Webserver Secret Key (for Flask sessions)
+kubectl create secret generic airflow-webserver-secret \
+  --from-literal=webserver-secret-key="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
+  --namespace airflow
+
+# 3. Fernet Key (for encrypting connections/variables in Airflow)
+kubectl create secret generic airflow-fernet-key \
+  --from-literal=fernet-key="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  --namespace airflow
+```
+
+**Verify all secrets are created:**
+```bash
+kubectl get secrets -n airflow
+
+# Expected output should include:
+# - airflow-postgresql
+# - airflow-webserver-secret
+# - airflow-fernet-key
+# - flux-git-ssh
+```
+
+**IMPORTANT:** Save the generated passwords securely (use a password manager). You'll need them if you ever need to access the database directly or restore the secrets.
+
+### Step 4: Wait for Flux to Deploy Airflow
 
 Flux will automatically detect the manifests in `clusters/production/` and deploy them:
 
@@ -128,7 +163,7 @@ flux get helmreleases -n airflow
 flux get sources all
 ```
 
-### Step 4: Verify Airflow Deployment
+### Step 5: Verify Airflow Deployment
 
 ```bash
 # Check pods in airflow namespace
@@ -150,11 +185,11 @@ kubectl logs -n airflow <scheduler-pod-name> -c git-sync
 │       ├── 00-namespace.yaml         # Airflow namespace (applied first)
 │       ├── 01-helmrepository.yaml    # Airflow Helm repository source
 │       ├── 02-gitrepository.yaml     # Config repository source (optional)
-│       └── 03-helmrelease.yaml       # Airflow deployment
+│       └── 03-helmrelease.yaml       # Airflow deployment with security
 ├── archive/
 │   └── argocd-application.yaml       # Previous ArgoCD configuration
 ├── git-ssh-secret.yaml               # SSH key for DAG repository
-├── values.yaml                       # Airflow configuration values
+├── values.yaml                       # Airflow configuration values (reference)
 ├── Chart.yaml                        # Helm chart metadata (optional)
 └── README.md                         # This file
 ```
@@ -172,14 +207,39 @@ Main configuration is in `clusters/production/03-helmrelease.yaml`:
 
 ```yaml
 spec:
+  chart:
+    spec:
+      chart: airflow
+      version: "1.18.0"
   values:
+    airflowVersion: "3.0.2"
+    executor: "KubernetesExecutor"
+
+    # Security - references to secrets (created separately)
+    webserverSecretKeySecretName: "airflow-webserver-secret"
+    fernetKeySecretName: "airflow-fernet-key"
+
+    # DAG synchronization
     dags:
       gitSync:
         enabled: true
         repo: git@github.com:HSLU-DBIZ/JobMonitor-DAGs.git
         branch: main
         sshKeySecret: flux-git-ssh
+
+    # Database (uses external secret)
+    postgresql:
+      auth:
+        existingSecret: "airflow-postgresql"
 ```
+
+**Key features:**
+- Airflow 3.0.2 with Helm chart 1.18.0
+- KubernetesExecutor for scalable task execution
+- Secure secret management (no passwords in Git)
+- Git-sync for automatic DAG updates
+- PostgreSQL with persistent storage
+- Resource limits and health probes configured
 
 ### Modifying Configuration
 
@@ -239,58 +299,58 @@ kubectl port-forward -n airflow svc/mlops-airflow-web 8080:8080
 # Access at: http://localhost:8080
 ```
 
-## Troubleshooting
+## Security
 
-### Flux Not Syncing
+### Secret Management
 
-```bash
-# Check Flux system pods
-kubectl get pods -n flux-system
+All sensitive data (passwords, keys) are stored in Kubernetes secrets and **never committed to Git**. The HelmRelease references these secrets by name.
 
-# Check for errors in Flux logs
-flux logs --all-namespaces
+**Required secrets:**
+- `airflow-postgresql` - Database passwords
+- `airflow-webserver-secret` - Flask session secret
+- `airflow-fernet-key` - Airflow encryption key
+- `flux-git-ssh` - SSH key for DAG repository
 
-# Force reconciliation
-flux reconcile source git flux-system
-```
+### Rotating Secrets
 
-### HelmRelease Failed
-
-```bash
-# Detailed status
-kubectl describe helmrelease mlops-airflow -n airflow
-
-# Check Helm release history
-helm list -n airflow
-
-# Flux events
-flux events --for HelmRelease/mlops-airflow --namespace airflow
-```
-
-### DAGs Not Syncing
+To rotate a secret:
 
 ```bash
-# Check git-sync logs
-kubectl logs -n airflow <scheduler-pod> -c git-sync
+# 1. Delete the old secret
+kubectl delete secret airflow-postgresql -n airflow
 
-# Verify SSH secret exists
-kubectl get secret flux-git-ssh -n airflow -o yaml
+# 2. Create new secret with new password
+kubectl create secret generic airflow-postgresql \
+  --from-literal=postgres-password="$(openssl rand -base64 32)" \
+  --from-literal=password="$(openssl rand -base64 32)" \
+  --namespace airflow
 
-# Check git-sync container status
-kubectl describe pod <scheduler-pod> -n airflow
+# 3. Restart affected pods
+kubectl rollout restart deployment -n airflow
+kubectl rollout restart statefulset -n airflow
 ```
 
-### SSH Authentication Issues
+### Security Best Practices
 
-```bash
-# Verify secret has both identity and known_hosts
-kubectl get secret flux-git-ssh -n airflow -o jsonpath='{.data}' | jq 'keys'
+1. **Use external secrets management** (HashiCorp Vault, AWS Secrets Manager, etc.) for production
+2. **Enable secret encryption at rest** in Kubernetes
+3. **Rotate secrets regularly** (e.g., every 90 days)
+4. **Use RBAC** to limit secret access
+5. **Monitor secret access** via audit logs
+6. **Consider External Secrets Operator** for automated secret management from external sources
 
-# Should show: ["identity", "known_hosts"]
+### Production Security Checklist
 
-# Test SSH connection from a debug pod
-kubectl run -it --rm debug --image=alpine/git --restart=Never -n airflow -- sh
-```
+Before deploying to production:
+
+- [ ] Replace default passwords with strong, randomly generated ones
+- [ ] Enable TLS/SSL for all connections
+- [ ] Configure network policies to restrict pod communication
+- [ ] Set up RBAC with least-privilege access
+- [ ] Enable pod security policies/standards
+- [ ] Configure resource limits and quotas
+- [ ] Set up backup and disaster recovery for PostgreSQL data
+- [ ] Enable audit logging
 
 ## Flux vs ArgoCD Comparison
 

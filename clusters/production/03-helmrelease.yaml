@@ -5,11 +5,11 @@ metadata:
   namespace: airflow
 spec:
   interval: 10m
-  timeout: 10m
+  timeout: 15m
   chart:
     spec:
       chart: airflow
-      version: "1.15.0"
+      version: "1.18.0"
       sourceRef:
         kind: HelmRepository
         name: apache-airflow
@@ -22,7 +22,19 @@ spec:
     remediation:
       retries: 3
   values:
-    # Airflow configuration
+    # Airflow version
+    airflowVersion: "3.0.2"
+
+    # Executor - KubernetesExecutor for scalability
+    executor: "KubernetesExecutor"
+
+    # Security - Use Kubernetes secrets for sensitive data
+    # Create secrets using: kubectl create secret generic <name> --from-literal=<key>=<value> -n airflow
+    # See SECRETS-SETUP.md for detailed instructions
+    webserverSecretKeySecretName: "airflow-webserver-secret"
+    fernetKeySecretName: "airflow-fernet-key"
+
+    # Disable Helm hooks for GitOps workflow
     createUserJob:
       useHelmHooks: false
       applyCustomEnv: false
@@ -38,3 +50,137 @@ spec:
         branch: main
         subPath: ""
         sshKeySecret: flux-git-ssh
+        wait: 60
+        maxFailures: 0
+      persistence:
+        enabled: false  # Disabled when using git-sync
+
+    # Webserver configuration
+    webserver:
+      replicas: 1
+      service:
+        type: ClusterIP
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi
+        requests:
+          cpu: 250m
+          memory: 512Mi
+      livenessProbe:
+        enabled: true
+        initialDelaySeconds: 15
+        periodSeconds: 10
+      readinessProbe:
+        enabled: true
+        initialDelaySeconds: 15
+        periodSeconds: 10
+
+    # Scheduler configuration
+    scheduler:
+      replicas: 1
+      resources:
+        limits:
+          cpu: 500m
+          memory: 1Gi
+        requests:
+          cpu: 250m
+          memory: 512Mi
+      livenessProbe:
+        enabled: true
+        initialDelaySeconds: 15
+        periodSeconds: 10
+
+    # Triggerer configuration (for deferrable operators)
+    triggerer:
+      enabled: true
+      replicas: 1
+      resources:
+        limits:
+          cpu: 500m
+          memory: 512Mi
+        requests:
+          cpu: 100m
+          memory: 256Mi
+
+    # PostgreSQL database (using bundled chart)
+    # IMPORTANT: Create secret first: kubectl create secret generic airflow-postgresql \
+    #   --from-literal=postgres-password=<password> --from-literal=password=<password> -n airflow
+    postgresql:
+      enabled: true
+      auth:
+        enablePostgresUser: true
+        username: "airflow"
+        database: "airflow"
+        existingSecret: "airflow-postgresql"
+        secretKeys:
+          adminPasswordKey: "postgres-password"
+          userPasswordKey: "password"
+      primary:
+        persistence:
+          enabled: true
+          size: 8Gi
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+
+    # Redis (required for CeleryExecutor, optional for KubernetesExecutor)
+    redis:
+      enabled: false  # Set to true if using CeleryExecutor
+
+    # StatsD metrics
+    statsd:
+      enabled: true
+      overrideMappings: []
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+
+    # PgBouncer (connection pooling)
+    pgbouncer:
+      enabled: false  # Enable for production with high connection counts
+      maxClientConn: 100
+      metadataPoolSize: 10
+      resultBackendPoolSize: 5
+
+    # Log persistence
+    logs:
+      persistence:
+        enabled: true
+        size: 10Gi
+        storageClassName: ""  # Use default storage class
+
+    # Airflow configuration overrides
+    config:
+      core:
+        load_examples: false
+      webserver:
+        expose_config: false
+        enable_proxy_fix: true
+      logging:
+        remote_logging: false
+      metrics:
+        statsd_on: true
+        statsd_host: localhost
+        statsd_port: 9125
+      scheduler:
+        run_duration: 41460
+        statsd_on: true
+
+    # Security context
+    securityContext:
+      runAsUser: 50000
+      fsGroup: 0
+
+    # RBAC
+    rbac:
+      create: true
+      createSCCRoleBinding: false

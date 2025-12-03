@@ -15,25 +15,60 @@ This repository contains Flux CD manifests to deploy Apache Airflow on Kubernete
 
 ## Prerequisites
 
-1. **Kubernetes Cluster** (v1.30+ recommended)
-   ```bash
-   # For local development with kind:
-   kind create cluster --image kindest/node:v1.30.13
-   kubectl cluster-info --context kind-kind
-   ```
+### 1. Kubernetes Cluster
 
-2. **Flux CLI** installed
-   ```bash
-   # macOS
-   brew install fluxcd/tap/flux
+**For Docker Desktop (Recommended for Mac/Windows):**
+1. Open Docker Desktop settings
+2. Go to Kubernetes tab
+3. Enable Kubernetes
+4. Click "Apply & Restart"
+5. Verify: `kubectl cluster-info`
 
-   # Verify installation
-   flux --version
-   ```
+**For kind (Local Development):**
+```bash
+# Install kind
+brew install kind  # macOS
 
-3. **GitHub Personal Access Token** with repository permissions
-   - Go to GitHub Settings → Developer settings → Personal access tokens
-   - Create a token with `repo` permissions
+# Create cluster with Kubernetes 1.30+
+kind create cluster --image kindest/node:v1.30.13
+kubectl cluster-info --context kind-kind
+```
+
+**For MicroK8s (Linux):**
+```bash
+# Enable required addons
+microk8s enable dns
+microk8s enable storage
+
+# Get kubectl config
+microk8s kubectl config view --raw > ~/.kube/config
+```
+
+### 2. Flux CLI
+
+**macOS:**
+```bash
+brew install fluxcd/tap/flux
+```
+
+**Linux:**
+```bash
+curl -s https://fluxcd.io/install.sh | sudo bash
+```
+
+**Verify installation:**
+```bash
+flux --version
+```
+
+### 3. GitHub Personal Access Token
+
+Create a GitHub Personal Access Token with `repo` permissions:
+
+1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Click "Generate new token (classic)"
+3. Select scopes: `repo` (all)
+4. Generate and copy the token
 
 ## Installation
 
@@ -52,7 +87,7 @@ flux check --pre
 # Bootstrap Flux
 flux bootstrap github \
   --owner=$GITHUB_USER \
-  --repository=MLOps-ArgoCD \
+  --repository=MLOps-Flux \
   --branch=main \
   --path=./clusters/production \
   --personal
@@ -112,22 +147,28 @@ kubectl logs -n airflow <scheduler-pod-name> -c git-sync
 .
 ├── clusters/
 │   └── production/
-│       ├── helmrepository.yaml    # Airflow Helm repository source
-│       ├── gitrepository.yaml     # Config repository source (optional)
-│       └── helmrelease.yaml       # Airflow deployment
+│       ├── 00-namespace.yaml         # Airflow namespace (applied first)
+│       ├── 01-helmrepository.yaml    # Airflow Helm repository source
+│       ├── 02-gitrepository.yaml     # Config repository source (optional)
+│       └── 03-helmrelease.yaml       # Airflow deployment
 ├── archive/
-│   └── argocd-application.yaml    # Previous ArgoCD configuration
-├── git-ssh-secret.yaml            # SSH key for DAG repository
-├── values.yaml                    # Airflow configuration values
-├── Chart.yaml                     # Helm chart metadata (optional)
-└── README.md                      # This file
+│   └── argocd-application.yaml       # Previous ArgoCD configuration
+├── git-ssh-secret.yaml               # SSH key for DAG repository
+├── values.yaml                       # Airflow configuration values
+├── Chart.yaml                        # Helm chart metadata (optional)
+└── README.md                         # This file
 ```
+
+**Note:** Files in `clusters/production/` are numbered to ensure proper application order:
+1. Namespace created first
+2. Helm and Git repositories configured
+3. HelmRelease deployed last (after dependencies exist)
 
 ## Configuration
 
 ### Airflow Configuration
 
-Main configuration is in `clusters/production/helmrelease.yaml`:
+Main configuration is in `clusters/production/03-helmrelease.yaml`:
 
 ```yaml
 spec:
@@ -142,7 +183,7 @@ spec:
 
 ### Modifying Configuration
 
-1. Edit `clusters/production/helmrelease.yaml` or `values.yaml`
+1. Edit `clusters/production/03-helmrelease.yaml` or `values.yaml`
 2. Commit and push changes to GitHub
 3. Flux automatically detects changes and reconciles within the interval period (default: 10 minutes)
 
@@ -263,7 +304,7 @@ kubectl run -it --rm debug --image=alpine/git --restart=Never -n airflow -- sh
 
 ## Updating Airflow Version
 
-Edit `clusters/production/helmrelease.yaml`:
+Edit `clusters/production/03-helmrelease.yaml`:
 
 ```yaml
 spec:
@@ -308,9 +349,49 @@ If needed, you can rollback to ArgoCD:
    kubectl apply -f archive/git-ssh-secret.yaml
    ```
 
+## Tips
+
+### Development Workflow
+
+1. **Use shorter intervals for faster development:**
+   Edit `clusters/production/02-gitrepository.yaml` and set `interval: 1m` for quicker config updates.
+
+2. **Watch reconciliation in real-time:**
+   ```bash
+   watch flux get helmreleases -A
+   ```
+
+3. **Suspend reconciliation for manual changes:**
+   ```bash
+   # Suspend to make manual changes
+   flux suspend helmrelease mlops-airflow -n airflow
+
+   # Make your changes...
+
+   # Resume when done
+   flux resume helmrelease mlops-airflow -n airflow
+   ```
+
+4. **Export Helm values for debugging:**
+   ```bash
+   helm get values mlops-airflow -n airflow
+   ```
+
+5. **Check Flux version:**
+   ```bash
+   flux version
+   ```
+
+6. **View scheduler logs with DAG sync info:**
+   ```bash
+   SCHEDULER_POD=$(kubectl get pods -n airflow -l component=scheduler -o jsonpath='{.items[0].metadata.name}')
+   kubectl logs -n airflow $SCHEDULER_POD -c git-sync -f
+   ```
+
 ## Additional Resources
 
 - [Flux Documentation](https://fluxcd.io/flux/)
+- [Flux Get Started Guide](https://fluxcd.io/flux/get-started/)
 - [Airflow Helm Chart](https://airflow.apache.org/docs/helm-chart/)
 - [Flux Helm Guide](https://fluxcd.io/flux/guides/helmreleases/)
 - [GitOps Principles](https://opengitops.dev/)
@@ -320,4 +401,4 @@ If needed, you can rollback to ArgoCD:
 For issues related to:
 - **Flux**: [Flux GitHub Issues](https://github.com/fluxcd/flux2/issues)
 - **Airflow Helm Chart**: [Airflow Helm Chart Issues](https://github.com/apache/airflow/issues)
-- **This Repository**: [Open an issue](https://github.com/florianbaer/MLOps-ArgoCD/issues)
+- **This Repository**: [Open an issue](https://github.com/florianbaer/MLOps-Flux/issues)

@@ -157,7 +157,7 @@ spec:
     # Airflow configuration overrides
     config:
       core:
-        load_examples: false
+        load_examples: true
       webserver:
         expose_config: false
         enable_proxy_fix: true

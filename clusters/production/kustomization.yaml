@@ -6,3 +6,10 @@ resources:
   - 01-helmrepository.yaml
   - 02-gitrepository.yaml
   - 03-helmrelease.yaml
+  - 04-traefik-namespace.yaml
+  - 05-traefik-helmrepository.yaml
+  - 06-traefik-crds-helmrelease.yaml
+  - 07-traefik-helmrelease.yaml
+  - 08-nextcloud-namespace.yaml
+  - 09-nextcloud-helmrepository.yaml
+  - 10-nextcloud-helmrelease.yaml

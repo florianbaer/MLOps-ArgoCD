@@ -1,0 +1,75 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: nextcloud
+      sourceRef:
+        kind: HelmRepository
+        name: nextcloud
+        namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Small instance configuration
+    replicaCount: 1
+
+    # Resource limits for small instance
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Nextcloud configuration
+    nextcloud:
+      host: nextcloud.local
+      username: admin
+      password: changeme123
+
+    # Use internal database for simplicity
+    internalDatabase:
+      enabled: true
+      name: nextcloud
+
+    # Disable external databases
+    mariadb:
+      enabled: false
+    postgresql:
+      enabled: false
+    redis:
+      enabled: false
+
+    # Persistence configuration
+    persistence:
+      enabled: true
+      size: 2Gi
+      accessMode: ReadWriteOnce
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      port: 8080
+
+    # Ingress disabled by default
+    ingress:
+      enabled: false
+
+    # Lifecycle hooks for proper shutdown
+    lifecycle: {}
+
+    # Cronjob for background tasks
+    cronjob:
+      enabled: true

@@ -9,9 +9,10 @@ This repository contains Flux CD manifests to deploy Apache Airflow on Kubernete
 ### Architecture
 
 - **GitOps Tool**: Flux CD
-- **Workload**: Apache Airflow (Helm Chart)
+- **Workloads**:
+  - Apache Airflow (Helm Chart) - MLOps workflows
 - **DAG Source**: Git repository with SSH authentication
-- **Namespace**: `airflow`
+- **Namespaces**: `airflow`
 
 ## Prerequisites
 

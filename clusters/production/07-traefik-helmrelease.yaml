@@ -28,6 +28,8 @@ spec:
   values:
     # Small instance configuration
     deployment:
+      enabled: true
+      kind: Deployment
       replicas: 1
 
     # Resource limits for small instance

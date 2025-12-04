@@ -26,7 +26,20 @@ spec:
     remediation:
       retries: 3
   values:
-    # Basic Traefik configuration
+    # Small instance configuration
+    deployment:
+      replicas: 1
+
+    # Resource limits for small instance
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi
+
+    # Basic port configuration
     ports:
       web:
         port: 80
@@ -34,10 +47,25 @@ spec:
       websecure:
         port: 443
         exposedPort: 443
+
+    # Service configuration
     service:
       type: LoadBalancer
+
+    # Minimal logging
     logs:
       general:
         level: INFO
       access:
+        enabled: true
+
+    # Disable metrics and tracing for minimal footprint
+    metrics:
+      prometheus: null
+
+    # Basic health checks
+    providers:
+      kubernetesCRD:
+        enabled: true
+      kubernetesIngress:
         enabled: true

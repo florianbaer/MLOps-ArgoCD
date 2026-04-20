@@ -1,153 +1,162 @@
 # MLOps Airflow with Flux CD
 
-GitOps-based deployment of Apache Airflow for MLOps workflows using Flux CD.
+GitOps-based deployment of Apache Airflow for MLOps workflows, running locally on a Podman + kind Kubernetes cluster.
 
-## Overview
+## What you'll build
 
-This repository contains Flux CD manifests to deploy Apache Airflow on Kubernetes with automated DAG synchronization from a Git repository.
+A working Apache Airflow instance on your laptop:
 
-### Architecture
+- **Kubernetes cluster** running locally in a single Podman container (via `kind`)
+- **Flux CD** managing the Airflow deployment
+- **Apache Airflow** (Helm chart) with PostgreSQL, scheduler, DAG processor, API server
+- **Git-sync** pulling DAG files from your GitHub repository over SSH
 
-- **GitOps Tool**: Flux CD
-- **Workloads**:
-  - Apache Airflow (Helm Chart) - MLOps workflows
-- **DAG Source**: Git repository with SSH authentication
-- **Namespaces**: `airflow`
+Expected total time: **15–25 minutes** (most of it waiting for images to pull).
+
+---
 
 ## Prerequisites
 
-### 1. Kubernetes Cluster
+You need a Mac (these instructions assume macOS with Homebrew). Linux works too but command names may differ.
 
-**For Docker Desktop (Recommended for Mac/Windows):**
-1. Open Docker Desktop settings
-2. Go to Kubernetes tab
-3. Enable Kubernetes
-4. Click "Apply & Restart"
-5. Verify: `kubectl cluster-info`
+Install these once:
 
-**For kind (Local Development):**
 ```bash
-# Install kind
-brew install kind  # macOS
-
-# Create cluster with Kubernetes 1.30+
-kind create cluster --image kindest/node:v1.30.13
-kubectl cluster-info --context kind-kind
+brew install podman kind kubectl fluxcd/tap/flux
 ```
 
-**For MicroK8s (Linux):**
+Verify:
+
 ```bash
-# Enable required addons
-microk8s enable dns
-microk8s enable storage
-
-# Get kubectl config
-microk8s kubectl config view --raw > ~/.kube/config
-```
-
-### 2. Flux CLI
-
-**macOS:**
-```bash
-brew install fluxcd/tap/flux
-```
-
-**Linux:**
-```bash
-curl -s https://fluxcd.io/install.sh | sudo bash
-```
-
-**Verify installation:**
-```bash
+podman --version
+kind --version
+kubectl version --client
 flux --version
 ```
 
-### 3. GitHub Personal Access Token
+You also need a **GitHub account** and a **repository** that will hold your DAG Python files (see Step 4).
 
-Create a GitHub Personal Access Token with `repo` permissions:
+---
 
-1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
-2. Click "Generate new token (classic)"
-3. Select scopes: `repo` (all)
-4. Generate and copy the token
+## Step 1 — Start Podman with enough resources
 
-## Installation
-
-### Step 1: Bootstrap Flux
-
-Set up Flux on your cluster and configure it to watch this repository:
+Airflow + Postgres + the Kubernetes control plane need roughly 8 GB of memory. The default Podman machine is too small.
 
 ```bash
-# Set environment variables
-export GITHUB_TOKEN=<your-personal-access-token>
-export GITHUB_USER=<your-github-username>
-
-# Verify prerequisites
-flux check --pre
-
-# Bootstrap Flux
-flux bootstrap github \
-  --owner=$GITHUB_USER \
-  --repository=MLOps-Flux \
-  --branch=main \
-  --path=./clusters/production \
-  --personal
+podman machine init         # only if you've never used podman before
+podman machine stop         # ignore error if not yet running
+podman machine set --memory 12288 --cpus 6
+podman machine start
 ```
 
-**What happens during bootstrap:**
-- Flux components are installed in the `flux-system` namespace
-- A deploy key is added to your GitHub repository
-- Flux starts monitoring the `./clusters/production` directory
-- Automatic synchronization is enabled
-
-### Step 2: Generate SSH Key for DAG Repository
-
-Before applying the SSH secret, you need to generate an SSH key pair and configure it as a GitHub deploy key for your DAG repository.
-
-#### 2.1 Generate SSH Key Pair
+Verify:
 
 ```bash
-# Generate SSH key (press Enter when prompted for passphrase to leave it empty)
-ssh-keygen -t ed25519 -C "airflow-dag-sync" -f ~/.ssh/airflow_dag_key
+podman machine inspect podman-machine-default | grep -E "Memory|CPUs"
+# expected: "CPUs": 6,  "Memory": 12288,
 ```
 
-This creates two files:
-- `~/.ssh/airflow_dag_key` - Private key (keep secret)
-- `~/.ssh/airflow_dag_key.pub` - Public key (add to GitHub)
+---
 
-#### 2.2 Add Deploy Key to GitHub
-
-1. Copy your public key:
-   ```bash
-   cat ~/.ssh/airflow_dag_key.pub
-   ```
-
-2. Add it to your DAG repository on GitHub:
-   - Go to your DAG repository → **Settings** → **Deploy keys**
-   - Click **"Add deploy key"**
-   - **Title**: `Airflow GitSync`
-   - **Key**: Paste the public key content
-   - **Important**: Leave **"Allow write access"** UNCHECKED (read-only is sufficient)
-   - Click **"Add key"**
-
-For detailed instructions, see: [GitHub Deploy Keys Documentation](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys)
-
-#### 2.3 Create the Secret File
-
-**IMPORTANT**: This file contains sensitive data and must NEVER be committed to git.
+## Step 2 — Create a local Kubernetes cluster with kind
 
 ```bash
-# Copy the template to create your secret file
+KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster \
+  --image kindest/node:v1.30.13 --name mlops-flux
+```
+
+This takes 2–3 minutes on first run (downloads the node image). When done:
+
+```bash
+kubectl cluster-info
+# Kubernetes control plane is running at https://127.0.0.1:<port>
+```
+
+> **If your laptop sleeps or you reboot**, the kind container may stop.
+> Restart it with:
+> ```bash
+> podman start mlops-flux-control-plane
+> ```
+
+---
+
+## Step 3 — Install Flux into the cluster
+
+We're **not** using `flux bootstrap` — that would push a `flux-system/` folder to your GitHub repo. For a local student setup we just install Flux directly:
+
+```bash
+flux check --pre          # should all be green
+flux install
+```
+
+Expected final lines:
+
+```
+✔ helm-controller: deployment ready
+✔ kustomize-controller: deployment ready
+✔ notification-controller: deployment ready
+✔ source-controller: deployment ready
+✔ install finished
+```
+
+---
+
+## Step 4 — Prepare your DAG repository
+
+Create a GitHub repository that will hold your Airflow DAG Python files. For example: `github.com/<your-username>/MLOps-Dags`.
+
+Add at least one DAG file so Airflow has something to parse. A minimal example:
+
+```python
+# hello_dag.py
+from datetime import datetime
+from airflow import DAG
+from airflow.operators.empty import EmptyOperator
+
+with DAG("hello", start_date=datetime(2024, 1, 1), schedule=None, catchup=False):
+    EmptyOperator(task_id="noop")
+```
+
+Commit and push it to `main`.
+
+### 4.1 — Update the DAG repo URL in this project
+
+Edit `clusters/production/03-helmrelease.yaml` and change the `repo:` line under `dags.gitSync` to point to **your** repo:
+
+```yaml
+dags:
+  gitSync:
+    enabled: true
+    repo: git@github.com:<your-username>/<your-dag-repo>.git
+    branch: main
+    sshKeySecret: flux-git-ssh
+```
+
+### 4.2 — Generate an SSH key for git-sync
+
+```bash
+ssh-keygen -t ed25519 -C "airflow-dag-sync" -f ~/.ssh/airflow_dag_key -N ""
+cat ~/.ssh/airflow_dag_key.pub
+```
+
+### 4.3 — Add the public key as a Deploy Key on your DAG repo
+
+A **Deploy Key** is an SSH public key attached to a single repository. It lets the Airflow pod read DAGs from that repo without needing your personal GitHub credentials.
+
+1. Go to `https://github.com/<your-username>/<your-dag-repo>/settings/keys`
+2. Click **"Add deploy key"**
+3. **Title**: `Airflow GitSync`
+4. **Key**: paste the output of `cat ~/.ssh/airflow_dag_key.pub`
+5. **Leave "Allow write access" UNCHECKED** (read-only is safer)
+6. Click **"Add key"**
+
+### 4.4 — Create the SSH secret file
+
+```bash
 cp secret.yaml.template secret.yaml
-
-# Verify it's ignored by git
-git status  # secret.yaml should NOT appear in untracked files
-
-# Display your private key
-cat ~/.ssh/airflow_dag_key
 ```
 
-Edit `secret.yaml` and paste the entire private key output (including the BEGIN and END lines) under `gitSshKey`:
+Open `secret.yaml` in an editor, uncomment the lines, and paste your **private** key under `gitSshKey: |` (keep the 4-space indent):
 
 ```yaml
 apiVersion: v1
@@ -159,408 +168,231 @@ type: Opaque
 stringData:
   gitSshKey: |
     -----BEGIN OPENSSH PRIVATE KEY-----
-    [paste your private key here - all lines]
+    [paste contents of ~/.ssh/airflow_dag_key here]
     -----END OPENSSH PRIVATE KEY-----
 ```
 
-**Security Check - Run before committing anything:**
+> **IMPORTANT:** `secret.yaml` is already in `.gitignore`. **Never commit your private key.**
+>
+> Double-check:
+> ```bash
+> git status   # secret.yaml must NOT appear as untracked or modified
+> ```
+
+---
+
+## Step 5 — Create Kubernetes namespace and secrets
+
+Airflow needs a namespace and four secrets. The namespace is created first; then all secrets go into it.
+
 ```bash
-git status  # Verify secret.yaml is NOT listed
-cat .gitignore | grep secret  # Verify secret*.yaml is in .gitignore
-```
+kubectl create namespace airflow
 
-⚠️ **NEVER commit secret.yaml to git. It contains your private SSH key.**
-
-### Step 3: Apply the SSH Secret for DAG Sync
-
-The Airflow deployment needs SSH access to pull DAGs from a private Git repository.
-
-```bash
-# Apply the SSH secret
 kubectl apply -f secret.yaml
-```
 
-**Verify the secret:**
-```bash
-kubectl get secret flux-git-ssh -n airflow
-```
-
-### Step 4: Create Required Secrets
-
-Before Airflow can deploy, you must create Kubernetes secrets for sensitive data. **These secrets are never stored in Git.**
-
-```bash
-# 1. PostgreSQL Database Password
 kubectl create secret generic airflow-postgresql \
   --from-literal=postgres-password="$(openssl rand -base64 32)" \
   --from-literal=password="$(openssl rand -base64 32)" \
   --namespace airflow
 
-# 2. Webserver Secret Key (for Flask sessions)
 kubectl create secret generic airflow-webserver-secret \
   --from-literal=webserver-secret-key="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
   --namespace airflow
 
-# 3. Fernet Key (for encrypting connections/variables in Airflow)
 kubectl create secret generic airflow-fernet-key \
   --from-literal=fernet-key="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
   --namespace airflow
 ```
 
-**Verify all secrets are created:**
+Verify all four secrets exist:
+
 ```bash
 kubectl get secrets -n airflow
-
-# Expected output should include:
-# - airflow-postgresql
-# - airflow-webserver-secret
-# - airflow-fernet-key
-# - flux-git-ssh
 ```
 
-**IMPORTANT:** Save the generated passwords securely (use a password manager). You'll need them if you ever need to access the database directly or restore the secrets.
+Expected:
 
-### Step 5: Wait for Flux to Deploy Airflow
-
-Flux will automatically detect the manifests in `clusters/production/` and deploy them.
-
-**Expected Timeline:**
-- Initial deployment: 5-10 minutes
-- PostgreSQL startup: 2-3 minutes
-- Airflow webserver ready: 3-5 minutes after PostgreSQL
-- Be patient and watch the logs - multiple pod restarts during initial setup are normal
-
-```bash
-# Watch Flux reconciliation
-flux logs --follow
-
-# Check Helm releases
-flux get helmreleases -n airflow
-
-# Check all Flux sources
-flux get sources all
+```
+NAME                       TYPE     DATA   AGE
+airflow-fernet-key         Opaque   1      5s
+airflow-postgresql         Opaque   2      10s
+airflow-webserver-secret   Opaque   1      7s
+flux-git-ssh               Opaque   1      15s
 ```
 
-### Step 6: Verify Airflow Deployment
+---
+
+## Step 6 — Deploy Airflow via Flux
+
+Apply the HelmRepository (where to fetch the chart from) and the HelmRelease (the Airflow deployment itself):
 
 ```bash
-# Check pods in airflow namespace
+kubectl apply -f clusters/production/01-helmrepository.yaml
+kubectl apply -f clusters/production/03-helmrelease.yaml
+```
+
+> The `02-gitrepository.yaml` file is **optional** and only needed for `flux bootstrap`. Skip it for local dev.
+
+Watch Flux do its work:
+
+```bash
+flux get helmreleases -A
+```
+
+First you'll see `Running 'install' action` for up to several minutes while images pull and pods start.
+
+```bash
 kubectl get pods -n airflow
-
-# Check HelmRelease status
-kubectl describe helmrelease mlops-airflow -n airflow
-
-# Check git-sync logs (DAG synchronization)
-kubectl logs -n airflow <scheduler-pod-name> -c git-sync
 ```
 
-### Step 7: Verify DAGs are Loaded
+You're aiming for this state (5 `Running`, 1 `Completed`):
 
-Once Airflow is running, verify that DAGs are syncing from your Git repository:
+```
+NAME                                         READY   STATUS     RESTARTS   AGE
+mlops-airflow-api-server-xxx                 1/1     Running    0          5m
+mlops-airflow-create-user-xxx                0/1     Completed  1          5m
+mlops-airflow-dag-processor-xxx              3/3     Running    0          5m
+mlops-airflow-postgresql-0                   1/1     Running    0          5m
+mlops-airflow-run-airflow-migrations-xxx     0/1     Completed  0          5m
+mlops-airflow-scheduler-xxx                  2/2     Running    0          5m
+mlops-airflow-statsd-xxx                     1/1     Running    0          5m
+mlops-airflow-triggerer-0                    3/3     Running    0          5m
+```
 
-1. **Access the Airflow UI** (see "Access Airflow Web UI" section below)
+This takes **5–10 minutes** on first deploy. Pulling the Airflow image (`~520 MB`) and Postgres image is the slow part.
 
-2. **Check for DAGs on the dashboard:**
-   - You should see DAGs from your repository listed on the main page
-   - Initial sync can take 1-2 minutes after the scheduler starts
+---
 
-3. **Check git-sync logs to confirm synchronization:**
-   ```bash
-   SCHEDULER_POD=$(kubectl get pods -n airflow -l component=scheduler -o jsonpath='{.items[0].metadata.name}')
-   kubectl logs -n airflow $SCHEDULER_POD -c git-sync --tail=50
-   ```
+## Step 7 — Open the Airflow UI
 
-4. **Look for log messages indicating successful sync:**
-   ```
-   INFO: synced 3 files from origin/main
-   ```
+```bash
+kubectl port-forward -n airflow svc/mlops-airflow-api-server 8080:8080
+```
 
-**Troubleshooting:** If DAGs don't appear:
-- Verify SSH key is correctly configured as a deploy key in GitHub
-- Check that the repository URL is correct in `clusters/production/03-helmrelease.yaml`
-- Review git-sync container logs for authentication errors
-- Ensure your DAG repository contains valid Python files with DAG definitions
+Open in your browser: **http://localhost:8080**
 
-## Repository Structure
+Default credentials:
+- **Username:** `admin`
+- **Password:** `admin`
+
+Your DAGs from the GitHub repo should appear on the dashboard within 30–60 seconds.
+
+---
+
+## Step 8 — Verify DAG sync
+
+Check the git-sync sidecar inside the DAG processor pod:
+
+```bash
+DP=$(kubectl get pods -n airflow -l component=dag-processor -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n airflow $DP -c git-sync --tail=20
+```
+
+Look for:
+
+```
+"msg":"updated successfully","ref":"main","remote":"<commit-sha>","syncCount":1
+```
+
+If you push a new commit to your DAG repo, git-sync will pull it within 60 seconds. No redeploy needed.
+
+---
+
+## Common issues
+
+### 1. Pods stuck in `Pending` with PVC provisioning error
+
+```
+failed to provision volume with StorageClass "standard":
+NodePath only supports ReadWriteOnce and ReadWriteOncePod access modes
+```
+
+**Cause:** kind's `local-path` provisioner does not support `ReadWriteMany`. Airflow's chart tries to create a shared logs PVC with RWX.
+
+**Fix:** This project already sets `logs.persistence.enabled: false` in `03-helmrelease.yaml`. If you see this error, make sure that line is present.
+
+### 2. Helm install fails: `wrong type for value; expected string; got bool`
+
+The Airflow chart expects every value under `config:` to be a **string**. Use `"True"` / `"False"` / `"9125"`, not unquoted `true` / `false` / `9125`. See the `config:` block in `03-helmrelease.yaml` for the correct syntax.
+
+### 3. Kind container exited (OOMKilled, exit code 137)
+
+Your Podman machine ran out of memory. Re-run Step 1 with a larger `--memory` value.
+
+### 4. `The connection to the server 127.0.0.1:<port> was refused`
+
+The kind container stopped (laptop slept, reboot, etc.). Restart:
+
+```bash
+podman start mlops-flux-control-plane
+```
+
+### 5. DAG parse error: `use_uv=True` unknown
+
+The `@task.virtualenv(use_uv=True)` kwarg requires `apache-airflow-providers-standard >= 1.3` (ships with Airflow 3.1+). The default chart deploys **Airflow 3.0.2**, which has provider 1.2. Either:
+
+- Remove `use_uv=True` from your DAGs, **or**
+- Add `defaultAirflowTag: "3.1.0"` under `values:` in `03-helmrelease.yaml` to use a newer Airflow image.
+
+### 6. Stuck HelmRelease after a failed install
+
+If a HelmRelease gets stuck in `Running 'install' action` forever:
+
+```bash
+kubectl delete helmrelease mlops-airflow -n airflow
+kubectl delete secret -n airflow -l owner=helm
+kubectl delete deployment,statefulset,service -n airflow -l release=mlops-airflow
+kubectl apply -f clusters/production/03-helmrelease.yaml
+```
+
+Your user secrets (`airflow-postgresql`, `airflow-fernet-key`, etc.) stay intact.
+
+---
+
+## Cleanup
+
+Delete everything when you're done:
+
+```bash
+KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name mlops-flux
+```
+
+To also shut down Podman:
+
+```bash
+podman machine stop
+```
+
+---
+
+## Repository structure
 
 ```
 .
 ├── clusters/
 │   └── production/
-│       ├── 00-namespace.yaml         # Airflow namespace (applied first)
-│       ├── 01-helmrepository.yaml    # Airflow Helm repository source
-│       ├── 02-gitrepository.yaml     # Config repository source (optional)
-│       └── 03-helmrelease.yaml       # Airflow deployment with security
-git-ssh-secret.yaml               # SSH key for DAG repository
-Chart.yaml                        # Helm chart metadata (optional)
-└── README.md                         # This file
+│       ├── 00-namespace.yaml        # airflow namespace
+│       ├── 01-helmrepository.yaml   # Airflow Helm chart source
+│       ├── 02-gitrepository.yaml    # (optional, for flux bootstrap)
+│       ├── 03-helmrelease.yaml      # Airflow deployment config — edit DAG repo URL here
+│       └── flux-deploy-key.yaml     # (optional template)
+├── secret.yaml.template             # template for your git-sync SSH secret
+└── README.md
 ```
 
-**Note:** Files in `clusters/production/` are numbered to ensure proper application order:
-1. Namespace created first
-2. Helm and Git repositories configured
-3. HelmRelease deployed last (after dependencies exist)
+---
 
-## Configuration
+## Going further (optional)
 
-### DAG Repository Setup
+Once your local setup works, you can try:
 
-This setup syncs DAGs from a Git repository. For this exercise, you can use an example DAG repository or create your own.
+- **GitOps bootstrap**: use `flux bootstrap github` to have Flux pull the manifests from your fork of this repo instead of applying them with `kubectl apply`.
+- **Change Airflow version**: edit `defaultAirflowTag` in `03-helmrelease.yaml`, push, and watch Flux roll out the new version.
+- **Add resource limits**: tune the `resources:` blocks in `03-helmrelease.yaml` for your laptop.
 
-**Example DAG Repositories:**
-- https://github.com/matsudan/airflow-dag-examples - Collection of example Airflow DAGs
-- Fork the above repository to experiment with your own DAG modifications
-
-**To configure your DAG repository:**
-
-1. Choose or create a repository containing Airflow DAG files
-2. Update the repository URL in `clusters/production/03-helmrelease.yaml` (line 56):
-   ```yaml
-   dags:
-     gitSync:
-       enabled: true
-       repo: git@github.com:<your-username>/<your-dag-repo>.git
-       branch: main
-   ```
-3. Follow the SSH key setup in Step 2 to grant read access to the repository
-
-**Note**: The repository should contain Python files with Airflow DAG definitions in the root or in subdirectories.
-
-### Airflow Configuration
-
-Main configuration is in `clusters/production/03-helmrelease.yaml`:
-
-```yaml
-spec:
-  chart:
-    spec:
-      chart: airflow
-      version: "1.18.0"
-  values:
-    airflowVersion: "3.0.2"
-    executor: "KubernetesExecutor"
-
-    # Security - references to secrets (created separately)
-    webserverSecretKeySecretName: "airflow-webserver-secret"
-    fernetKeySecretName: "airflow-fernet-key"
-
-    # DAG synchronization
-    dags:
-      gitSync:
-        enabled: true
-        repo: git@github.com:HSLU-DBIZ/JobMonitor-DAGs.git
-        branch: main
-        sshKeySecret: flux-git-ssh
-
-    # Database (uses external secret)
-    postgresql:
-      auth:
-        existingSecret: "airflow-postgresql"
-```
-
-**Key features:**
-- Airflow 3.0.2 with Helm chart 1.18.0
-- KubernetesExecutor for scalable task execution
-- Secure secret management (no passwords in Git)
-- Git-sync for automatic DAG updates
-- PostgreSQL with persistent storage
-- Resource limits and health probes configured
-
-### Modifying Configuration
-
-1. Edit `clusters/production/03-helmrelease.yaml`
-2. Commit and push changes to GitHub
-3. Flux automatically detects changes and reconciles within the interval period (default: 10 minutes)
-
-**Force immediate reconciliation:**
-```bash
-flux reconcile source git flux-system
-flux reconcile helmrelease mlops-airflow -n airflow
-```
-
-## Monitoring
-
-### Check Flux Status
-
-```bash
-# Overall Flux health
-flux check
-
-# Git repository sync status
-flux get sources git -n flux-system
-
-# Helm repository sync status
-flux get sources helm -n flux-system
-
-# HelmRelease status
-flux get helmreleases -n airflow
-
-# Continuous logs
-flux logs --follow
-```
-
-### Check Airflow Status
-
-```bash
-# All resources in airflow namespace
-kubectl get all -n airflow
-
-# Specific pods
-kubectl get pods -n airflow -w
-
-# Scheduler logs
-kubectl logs -n airflow <scheduler-pod> -f
-
-# Git-sync status (DAG synchronization)
-kubectl logs -n airflow <scheduler-pod> -c git-sync -f
-```
-
-### Access Airflow Web UI
-
-```bash
-# Port-forward to access locally
-kubectl port-forward -n airflow svc/mlops-airflow-web 8080:8080
-
-# Access at: http://localhost:8080
-```
-
-**Default Credentials:**
-- **Username**: `admin`
-- **Password**: `admin`
-
-**Note**: For production deployments, change the default password by configuring Airflow's RBAC settings and creating custom user accounts.
-
-## Security
-
-### Secret Management
-
-All sensitive data (passwords, keys) are stored in Kubernetes secrets and **never committed to Git**. The HelmRelease references these secrets by name.
-
-**Required secrets:**
-- `airflow-postgresql` - Database passwords
-- `airflow-webserver-secret` - Flask session secret
-- `airflow-fernet-key` - Airflow encryption key
-- `flux-git-ssh` - SSH key for DAG repository
-
-### Security Best Practices
-
-1. **Use external secrets management** (HashiCorp Vault, AWS Secrets Manager, etc.) for production
-2. **Enable secret encryption at rest** in Kubernetes
-3. **Rotate secrets regularly** (e.g., every 90 days)
-4. **Use RBAC** to limit secret access
-5. **Monitor secret access** via audit logs
-6. **Consider External Secrets Operator** for automated secret management from external sources
-
-### Production Security Checklist
-
-Before deploying to production:
-
-- [ ] Replace default passwords with strong, randomly generated ones
-- [ ] Enable TLS/SSL for all connections
-- [ ] Configure network policies to restrict pod communication
-- [ ] Set up RBAC with least-privilege access
-- [ ] Enable pod security policies/standards
-- [ ] Configure resource limits and quotas
-- [ ] Set up backup and disaster recovery for PostgreSQL data
-- [ ] Enable audit logging
-
-## Updating Airflow Version
-
-Edit `clusters/production/03-helmrelease.yaml`:
-
-```yaml
-spec:
-  chart:
-    spec:
-      version: "1.16.0"  # Update version here
-```
-
-Commit and push. Flux will automatically upgrade Airflow.
-
-## Uninstalling
-
-### Remove Airflow
-
-```bash
-flux delete helmrelease mlops-airflow -n airflow
-```
-
-### Uninstall Flux
-
-```bash
-flux uninstall --silent
-```
-
-## Rollback to ArgoCD
-
-If needed, you can rollback to ArgoCD:
-
-1. Uninstall Flux:
-   ```bash
-   flux uninstall --silent
-   ```
-
-2. Restore ArgoCD application:
-   ```bash
-   kubectl apply -f archive/argocd-application.yaml
-   ```
-
-3. Revert secret changes:
-   ```bash
-   git checkout archive/git-ssh-secret.yaml
-   kubectl apply -f archive/git-ssh-secret.yaml
-   ```
-
-## Tips
-
-### Development Workflow
-
-1. **Use shorter intervals for faster development:**
-   Edit `clusters/production/02-gitrepository.yaml` and set `interval: 1m` for quicker config updates.
-
-2. **Watch reconciliation in real-time:**
-   ```bash
-   watch flux get helmreleases -A
-   ```
-
-3. **Suspend reconciliation for manual changes:**
-   ```bash
-   # Suspend to make manual changes
-   flux suspend helmrelease mlops-airflow -n airflow
-
-   # Make your changes...
-
-   # Resume when done
-   flux resume helmrelease mlops-airflow -n airflow
-   ```
-
-4. **Export Helm values for debugging:**
-   ```bash
-   helm get values mlops-airflow -n airflow
-   ```
-
-5. **Check Flux version:**
-   ```bash
-   flux version
-   ```
-
-6. **View scheduler logs with DAG sync info:**
-   ```bash
-   SCHEDULER_POD=$(kubectl get pods -n airflow -l component=scheduler -o jsonpath='{.items[0].metadata.name}')
-   kubectl logs -n airflow $SCHEDULER_POD -c git-sync -f
-   ```
-
-## Additional Resources
+## References
 
 - [Flux Documentation](https://fluxcd.io/flux/)
-- [Flux Get Started Guide](https://fluxcd.io/flux/get-started/)
 - [Airflow Helm Chart](https://airflow.apache.org/docs/helm-chart/)
-- [Flux Helm Guide](https://fluxcd.io/flux/guides/helmreleases/)
-- [GitOps Principles](https://opengitops.dev/)
-
-## Support
-
-For issues related to:
-- **Flux**: [Flux GitHub Issues](https://github.com/fluxcd/flux2/issues)
-- **Airflow Helm Chart**: [Airflow Helm Chart Issues](https://github.com/apache/airflow/issues)
-- **This Repository**: [Open an issue](https://github.com/florianbaer/MLOps-Flux/issues)
+- [kind with Podman](https://kind.sigs.k8s.io/docs/user/rootless/#creating-a-kind-cluster-with-rootless-podman)
+- [GitHub Deploy Keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys)

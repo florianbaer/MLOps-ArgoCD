@@ -23,7 +23,7 @@ spec:
       retries: 3
   values:
     # Airflow version
-    airflowVersion: "3.1.13"
+    airflowVersion: "3.0.2"
 
     # Executor - KubernetesExecutor for scalability
     executor: "KubernetesExecutor"
@@ -53,7 +53,7 @@ spec:
     dags:
       gitSync:
         enabled: true
-        repo: git@github.com:HSLU-DBIZ/JobMonitor-DAGs.git
+        repo: git@github.com:florianbaer/MLOps-Dags.git
         branch: main
         subPath: ""
         sshKeySecret: flux-git-ssh
@@ -130,29 +130,27 @@ spec:
       metadataPoolSize: 10
       resultBackendPoolSize: 5
 
-    # Log persistence
+    # Log persistence (disabled for local kind cluster — RWX not supported by local-path)
     logs:
       persistence:
-        enabled: true
-        size: 10Gi
-        storageClassName: ""  # Use default storage class
+        enabled: false
 
-    # Airflow configuration overrides
+    # Airflow configuration overrides (values must be strings — chart requirement)
     config:
       core:
-        load_examples: true
+        load_examples: "True"
       webserver:
-        expose_config: false
-        enable_proxy_fix: true
+        expose_config: "False"
+        enable_proxy_fix: "True"
       logging:
-        remote_logging: false
+        remote_logging: "False"
       metrics:
-        statsd_on: true
-        statsd_host: localhost
-        statsd_port: 9125
+        statsd_on: "True"
+        statsd_host: "localhost"
+        statsd_port: "9125"
       scheduler:
-        run_duration: 41460
-        statsd_on: true
+        run_duration: "41460"
+        statsd_on: "True"
 
     # Security context
     securityContext:

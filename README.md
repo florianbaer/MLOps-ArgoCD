@@ -8,7 +8,7 @@ A working Apache Airflow instance on your laptop:
 
 - **Kubernetes cluster** running locally in a single Podman container (via `kind`)
 - **Flux CD** managing the Airflow deployment
-- **Apache Airflow** (Helm chart) with PostgreSQL, scheduler, DAG processor, API server
+- **Apache Airflow 3.3** (official Helm chart 1.22) with PostgreSQL, scheduler, DAG processor, API server
 - **Git-sync** pulling DAG files from your GitHub repository over SSH
 
 Expected total time: **15–25 minutes** (most of it waiting for images to pull).
@@ -62,7 +62,8 @@ podman machine inspect podman-machine-default | grep -E "Memory|CPUs"
 
 ```bash
 KIND_EXPERIMENTAL_PROVIDER=podman kind create cluster \
-  --image kindest/node:v1.30.13 --name mlops-flux
+  --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5 \
+  --name mlops-flux
 ```
 
 This takes 2–3 minutes on first run (downloads the node image). When done:
@@ -110,12 +111,15 @@ Add at least one DAG file so Airflow has something to parse. A minimal example:
 ```python
 # hello_dag.py
 from datetime import datetime
-from airflow import DAG
-from airflow.operators.empty import EmptyOperator
+from airflow.sdk import DAG                                   # Airflow 3 public API
+from airflow.providers.standard.operators.empty import EmptyOperator
 
-with DAG("hello", start_date=datetime(2024, 1, 1), schedule=None, catchup=False):
+with DAG("hello", start_date=datetime(2026, 1, 1), schedule=None, catchup=False):
     EmptyOperator(task_id="noop")
 ```
+
+> The old `from airflow import DAG` / `airflow.operators.empty` paths still import on
+> Airflow 3.3 with a deprecation warning, but new DAGs should use the paths above.
 
 Commit and push it to `main`.
 
@@ -329,10 +333,7 @@ podman start mlops-flux-control-plane
 
 ### 5. DAG parse error: `use_uv=True` unknown
 
-The `@task.virtualenv(use_uv=True)` kwarg requires `apache-airflow-providers-standard >= 1.3` (ships with Airflow 3.1+). The default chart deploys **Airflow 3.0.2**, which has provider 1.2. Either:
-
-- Remove `use_uv=True` from your DAGs, **or**
-- Add `defaultAirflowTag: "3.1.0"` under `values:` in `03-helmrelease.yaml` to use a newer Airflow image.
+The `@task.virtualenv(use_uv=True)` kwarg requires `apache-airflow-providers-standard >= 1.3` (ships with Airflow 3.1+). This project pins **Airflow 3.3.1** in `03-helmrelease.yaml`, which has it. If you see this error you are running an older image - check `airflowVersion` / `defaultAirflowTag` under `values:` and re-apply the HelmRelease.
 
 ### 6. Stuck HelmRelease after a failed install
 
@@ -387,7 +388,7 @@ podman machine stop
 Once your local setup works, you can try:
 
 - **GitOps bootstrap**: use `flux bootstrap github` to have Flux pull the manifests from your fork of this repo instead of applying them with `kubectl apply`.
-- **Change Airflow version**: edit `defaultAirflowTag` in `03-helmrelease.yaml`, push, and watch Flux roll out the new version.
+- **Change Airflow version**: edit `airflowVersion` and `defaultAirflowTag` together in `03-helmrelease.yaml`, push, and watch Flux roll out the new version.
 - **Add resource limits**: tune the `resources:` blocks in `03-helmrelease.yaml` for your laptop.
 
 ## References

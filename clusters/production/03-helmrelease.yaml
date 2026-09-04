@@ -9,7 +9,7 @@ spec:
   chart:
     spec:
       chart: airflow
-      version: "1.18.0"
+      version: "1.22.0"
       sourceRef:
         kind: HelmRepository
         name: apache-airflow
@@ -22,8 +22,11 @@ spec:
     remediation:
       retries: 3
   values:
-    # Airflow version
-    airflowVersion: "3.0.2"
+    # Airflow release to run. The chart default (3.2.2 for chart 1.22.0) lags the
+    # latest release; pin both keys so the image tag and the version-dependent
+    # chart logic agree. Bump them together.
+    airflowVersion: "3.3.1"
+    defaultAirflowTag: "3.3.1"
 
     # Executor - KubernetesExecutor for scalability
     executor: "KubernetesExecutor"
